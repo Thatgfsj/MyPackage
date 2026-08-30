@@ -214,7 +214,7 @@ fun ShareScreen() {
                                 if (chosen.isEmpty()) return@Button
                                 generating = true
                                 scope.launch {
-                                    val text = withContext(Dispatchers.IO) { ShareCodec.encodeFull(chosen) }
+                                    val text = withContext(Dispatchers.IO) { ShareCodec.encodeSmall(chosen) }
                                     bundle = if (text.toByteArray(Charsets.UTF_8).size <= ShareCodec.QR_BYTE_LIMIT) {
                                         ShareBundle.Single(text, chosen.first().name, chosen.last().name)
                                     } else {

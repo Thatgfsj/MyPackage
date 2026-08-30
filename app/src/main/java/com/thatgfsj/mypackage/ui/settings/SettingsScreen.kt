@@ -51,7 +51,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.thatgfsj.mypackage.BuildConfig
 import com.thatgfsj.mypackage.data.ShareCodec
 import com.thatgfsj.mypackage.data.StationRepository
 import com.thatgfsj.mypackage.ui.components.Capsule
@@ -83,11 +82,11 @@ fun SettingsScreen(
             val tag = withContext(Dispatchers.IO) { UpdateChecker.latestTag() }
             if (tag == null) {
                 Capsule.show("暂无发布版本或网络检查失败", Capsule.Kind.FALLBACK)
-            } else if (UpdateChecker.isNewer(tag, BuildConfig.VERSION_NAME)) {
+            } else if (UpdateChecker.isNewer(tag, UpdateChecker.APP_VERSION)) {
                 Capsule.clear()
                 updateTag = tag
             } else {
-                Capsule.show("已是最新版本 v${BuildConfig.VERSION_NAME}", Capsule.Kind.SUCCESS)
+                Capsule.show("已是最新版本 v${UpdateChecker.APP_VERSION}", Capsule.Kind.SUCCESS)
             }
         }
     }
@@ -111,26 +110,51 @@ fun SettingsScreen(
 
     // 网络导入：从 URL 拉取 JSON（分享或备份链接）
     fun doNetworkImport(url: String) {
-        if (url.isBlank()) {
+        val trimmed = url.trim()
+        if (trimmed.isBlank()) {
             Capsule.show("请输入链接", Capsule.Kind.FALLBACK)
+            return
+        }
+        // 生成候选链接（最多三次）：原样 → 补 http:// → 补 https://
+        val candidates = buildList {
+            add(trimmed)
+            if (!trimmed.startsWith("http://", true) && !trimmed.startsWith("https://", true)) {
+                add("http://$trimmed")
+                add("https://$trimmed")
+            }
+        }
+        // 安全校验：仅 http/https，且 host 不为 localhost/内网/保留地址
+        val safe = candidates.filter { candidate ->
+            try {
+                val u = java.net.URL(candidate)
+                if (u.protocol != "http" && u.protocol != "https") return@filter false
+                !isUnsafeHost(u.host)
+            } catch (e: Exception) {
+                false
+            }
+        }
+        if (safe.isEmpty()) {
+            Capsule.show("链接格式不正确或目标地址不可访问", Capsule.Kind.FALLBACK)
             return
         }
         networkDialog = false
         scope.launch {
             Capsule.show("正在从网络导入…", Capsule.Kind.OPENING)
-            try {
-                val text = withContext(Dispatchers.IO) {
-                    val conn = java.net.URL(url.trim()).openConnection()
-                    conn.connectTimeout = 10000
-                    conn.readTimeout = 15000
-                    conn.setRequestProperty("User-Agent", "MyPackage-App")
-                    conn.inputStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-                        ?: throw IllegalStateException("无法获取内容")
+            for (candidate in safe) {
+                try {
+                    val text = withContext(Dispatchers.IO) { fetch(candidate) }
+                    if (text.isBlank()) continue
+                    val payload = ShareCodec.tryDecodeFull(text)
+                        ?: ShareCodec.tryDecodeChunk(text)?.let { ShareCodec.assemble(listOf(it)) }
+                    if (payload == null || payload.s.isEmpty()) continue
+                    withContext(Dispatchers.IO) { repo.importPayload(payload) }
+                    Capsule.show("成功导入 ${payload.s.size} 个驿站", Capsule.Kind.SUCCESS)
+                    return@launch
+                } catch (e: Exception) {
+                    // 继续尝试下一个候选
                 }
-                doImportText(text)
-            } catch (e: Exception) {
-                Capsule.show("网络导入失败：${e.message ?: "未知错误"}", Capsule.Kind.FALLBACK)
             }
+            Capsule.show("导入失败：链接无法访问或不是有效的驿站备份 JSON", Capsule.Kind.FALLBACK)
         }
     }
 
@@ -198,7 +222,7 @@ fun SettingsScreen(
             SettingsRowData(Icons.Rounded.FileUpload, "导入数据", "从 JSON 文件导入") {
                 importSource = true
             },
-            SettingsRowData(Icons.Rounded.Info, "关于", "版本 " + BuildConfig.VERSION_NAME) { showAbout = true },
+            SettingsRowData(Icons.Rounded.Info, "关于", "版本 " + UpdateChecker.APP_VERSION) { showAbout = true },
             SettingsRowData(Icons.Rounded.CloudDownload, "检查更新", "从 GitHub 获取最新版本") {
                 checkUpdate()
             }
@@ -216,7 +240,7 @@ fun SettingsScreen(
             text = {
                 Column {
                     Text(
-                        "我的快递 My Packages v${BuildConfig.VERSION_NAME}\n\n" +
+                        "我的快递 My Packages v${UpdateChecker.APP_VERSION}\n\n" +
                             "所有数据仅保存在本机，无需任何网络权限（仅在你手动「检查更新」时访问 GitHub）。"
                     )
                     Text(
@@ -246,7 +270,7 @@ fun SettingsScreen(
             onDismissRequest = { updateTag = null },
             title = { Text("发现新版本") },
             text = {
-                Text("最新版本：$tag\n当前版本：v${BuildConfig.VERSION_NAME}\n\n是否前往 GitHub 下载？")
+                Text("最新版本：$tag\n当前版本：v${UpdateChecker.APP_VERSION}\n\n是否前往 GitHub 下载？")
             },
             confirmButton = {
                 TextButton(
@@ -323,6 +347,37 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+/** 拒绝 localhost、环回、私有、保留地址（安全约束） */
+private fun isUnsafeHost(host: String): Boolean {
+    val h = host.lowercase().trim()
+    if (h == "localhost") return true
+    val ip = try {
+        java.net.InetAddress.getByName(h)
+    } catch (e: Exception) {
+        return false // 无法解析为 IP（域名），放行交给连接去判断
+    }
+    if (ip.isLoopbackAddress || ip.isAnyLocalAddress || ip.isLinkLocalAddress || ip.isSiteLocalAddress) return true
+    return ip.address?.let { a ->
+        // 保留/特殊地址段
+        val b0 = a[0].toInt() and 0xFF
+        b0 == 0 || b0 == 10 || b0 == 127 ||
+            (b0 == 169 && (a[1].toInt() and 0xFF) == 254) ||
+            (b0 == 172 && (a[1].toInt() and 0xFF) in 16..31) ||
+            (b0 == 192 && (a[1].toInt() and 0xFF) == 168) ||
+            b0 in 224..255
+    } ?: false
+}
+
+/** 发起一次 HTTP(S) GET 并返回文本 */
+private fun fetch(candidate: String): String {
+    val conn = java.net.URL(candidate).openConnection()
+    conn.connectTimeout = 8000
+    conn.readTimeout = 10000
+    conn.setRequestProperty("User-Agent", "MyPackage-App")
+    return conn.inputStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+        ?: throw IllegalStateException("无法获取内容")
 }
 
 private data class SettingsRowData(

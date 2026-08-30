@@ -66,8 +66,20 @@ object ShareCodec {
         o = s.sortOrder
     )
 
-    /** 直接导出为完整 JSON（用于文件备份，图片以 base64 内嵌） */
+    /** 用于 JSON 导出/备份：图片用原图，保证清晰度（体积会更大，仅文件路径可用） */
+    fun toDtoFull(s: StationEntity) = StationDTO(
+        n = s.name, p = s.platform, l = s.rawLink,
+        r = s.lockerRange, c = s.customPackage,
+        img = ImageUtils.toFullBase64(s.imagePath),
+        o = s.sortOrder
+    )
+
+    /** 直接导出为完整 JSON（用于文件备份/网络导入，图片以原图 base64 内嵌，保留清晰度） */
     fun encodeFull(stations: List<StationEntity>): String =
+        json.encodeToString(StationPayload(s = stations.map(::toDtoFull)))
+
+    /** 供二维码分享使用：图片压缩为小图 base64，控制二维码体积 */
+    fun encodeSmall(stations: List<StationEntity>): String =
         json.encodeToString(StationPayload(s = stations.map(::toDto)))
 
     /**

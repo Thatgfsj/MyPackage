@@ -7,6 +7,10 @@ import java.net.URL
 object UpdateChecker {
 
     const val REPO_URL = "https://github.com/Thatgfsj/MyPackage"
+
+    /** 应用版本号（与 gradle 里的 versionName 保持一致；此处用常量避免 BuildConfig 生成问题） */
+    const val APP_VERSION = "0.9.1"
+
     private const val API_URL = "https://api.github.com/repos/Thatgfsj/MyPackage/releases/latest"
 
     /**

@@ -97,4 +97,20 @@ object ImageUtils {
     } catch (e: Exception) {
         null
     }
+
+    /**
+     * 原图 base64（不重新缩放/压缩，保留原始分辨率与质量）。
+     * 用于 JSON 导出与网络导入；本应用存储的驿站图已是 JPEG（导入时压缩到 1280px）。
+     * 无图/失败返回空串。
+     */
+    fun toFullBase64(path: String): String = try {
+        if (path.isBlank()) ""
+        else {
+            val file = File(path)
+            if (!file.exists()) ""
+            else Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+        }
+    } catch (e: Exception) {
+        ""
+    }
 }

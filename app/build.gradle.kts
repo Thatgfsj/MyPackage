@@ -14,8 +14,8 @@ android {
         applicationId = "com.thatgfsj.mypackage"
         minSdk = 24
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.9"
+        versionCode = 18
+        versionName = "0.9.1"
     }
 
     signingConfigs {
@@ -43,7 +43,6 @@ android {
     }
     buildFeatures {
         compose = true
-        buildConfig = true
     }
     lint {
         checkReleaseBuilds = false
